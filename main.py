@@ -1,15 +1,14 @@
-import base64
-import time
 import os
-from fastapi import FastAPI, File, UploadFile
+import base64
+import requests
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from openai import OpenAI
+from groq import Groq
 
-# Explicitly defining the app root for Serverless
 app = FastAPI()
 
-# VERY IMPORTANT: Allows your Vercel URL to accept requests from any origin
+# CORS: Update "*" to your Flutter Web URL after deployment for extra security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,57 +17,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize OpenRouter/SiliconFlow Client
-client = OpenAI(
-    api_key="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", # Paste your exact key here
-    base_url="https://api.siliconflow.cn/v1" 
-)
+# Use Environment Variables for Vercel Deployment
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "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")
+
+client = Groq(api_key=GROQ_API_KEY)
 
 class NewsRequest(BaseModel):
     text: str
 
+@app.get("/")
+async def root():
+    return {"message": "TruthLens API is Live", "status": "online"}
+
 @app.post("/predict")
 async def verify_text(request: NewsRequest):
     try:
-        response = client.chat.completions.create(
-            model="Qwen/Qwen2.5-7B-Instruct", 
-            messages=[{"role": "user", "content": f"Fact-check this: {request.text}. Verdict: [Real/Fake]. Reason:"}],
-            timeout=30.0
+        search_res = requests.post("https://api.tavily.com/search", 
+            json={"api_key": TAVILY_API_KEY, "query": request.text, "search_depth": "advanced"}).json()
+        context = "\n".join([r['content'] for r in search_res.get("results", [])])
+        
+        prompt = f"Statement: {request.text}\nContext: {context}\nInstruction: Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Then reason."
+        chat = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}], 
+            model="llama-3.3-70b-versatile"
         )
-        return {"prediction": response.choices[0].message.content}
+        return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Text Analysis Error: {str(e)}"}
+        return {"prediction": f"Deployment Error: {str(e)}"}
 
 @app.post("/predict-image")
 async def verify_image(file: UploadFile = File(...)):
     try:
-        image_bytes = await file.read()
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        content = await file.read()
+        b64_image = base64.b64encode(content).decode('utf-8')
         
-        # Cold Start Retry Logic ensures the server doesn't timeout immediately
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = client.chat.completions.create(
-                    model="deepseek-ai/deepseek-vl2", 
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Is this image Real, Fake, or AI-generated? Explain in detail."},
-                                {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{base64_image}"}}
-                            ],
-                        }
-                    ],
-                    timeout=60.0 
-                )
-                return {"prediction": response.choices[0].message.content}
-            
-            except Exception as e:
-                print(f"Attempt {attempt + 1} failed: {e}")
-                if attempt == max_retries - 1:
-                    return {"prediction": "The AI model is currently booting up (Cold Start). Please try again in a moment."}
-                time.sleep(2) 
-                
+        chat = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct", 
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Is this image Real, Fake, or AI-generated? Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'."},
+                    {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{b64_image}"}}
+                ]
+            }],
+        )
+        return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Image Upload Error: {str(e)}"}
+        return {"prediction": f"Deployment Error: {str(e)}"}
