@@ -8,7 +8,6 @@ from groq import Groq
 
 app = FastAPI()
 
-# CORS: Update "*" to your Flutter Web URL after deployment for extra security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +16,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Use Environment Variables for Vercel Deployment
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "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")
 
@@ -28,7 +26,7 @@ class NewsRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "TruthLens API is Live", "status": "online"}
+    return {"message": "TruthLens API is Online"}
 
 @app.post("/predict")
 async def verify_text(request: NewsRequest):
@@ -37,14 +35,24 @@ async def verify_text(request: NewsRequest):
             json={"api_key": TAVILY_API_KEY, "query": request.text, "search_depth": "advanced"}).json()
         context = "\n".join([r['content'] for r in search_res.get("results", [])])
         
-        prompt = f"Statement: {request.text}\nContext: {context}\nInstruction: Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Then reason."
+        # PROMPT UPDATE: Requesting a detailed point-by-point breakdown
+        prompt = f"""Statement to check: "{request.text}"
+Context from Web: {context}
+
+INSTRUCTIONS:
+You are a highly analytical forensic fact-checker. 
+1. Evaluate the statement. Start your response EXACTLY with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'.
+2. After the label, provide a DETAILED, POINT-BY-POINT report explaining your verdict. 
+3. Use bullet points or numbered lists to break down the context, evidence, and logical deductions step-by-step."""
+
         chat = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}], 
-            model="llama-3.3-70b-versatile"
+            model="llama-3.3-70b-versatile",
+            temperature=0.1 
         )
         return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Deployment Error: {str(e)}"}
+        return {"prediction": f"LABEL: ERROR\nBackend Error: {str(e)}"}
 
 @app.post("/predict-image")
 async def verify_image(file: UploadFile = File(...)):
@@ -52,16 +60,18 @@ async def verify_image(file: UploadFile = File(...)):
         content = await file.read()
         b64_image = base64.b64encode(content).decode('utf-8')
         
+        # PROMPT UPDATE: Requesting forensic visual analysis in points
         chat = client.chat.completions.create(
             model="meta-llama/llama-4-scout-17b-16e-instruct", 
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Is this image Real, Fake, or AI-generated? Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'."},
+                    {"type": "text", "text": "Analyze this image meticulously. Start your response EXACTLY with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Then, provide a DETAILED, POINT-BY-POINT analytical report explaining the visual evidence, lighting, artifacts, or context that led to your verdict. Use bullet points."},
                     {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{b64_image}"}}
                 ]
             }],
+            temperature=0.2
         )
         return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Deployment Error: {str(e)}"}
+        return {"prediction": f"LABEL: ERROR\nVision Error: {str(e)}"}
