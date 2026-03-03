@@ -8,7 +8,6 @@ from groq import Groq
 
 app = FastAPI()
 
-# CORS: Update "*" to your Flutter Web URL after deployment for extra security
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Use Environment Variables for Vercel Deployment
+# API Keys - In Vercel, set these in Settings > Environment Variables
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "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")
 
@@ -28,7 +27,7 @@ class NewsRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "TruthLens API is Live", "status": "online"}
+    return {"message": "TruthLens Backend is running!", "status": "online"}
 
 @app.post("/predict")
 async def verify_text(request: NewsRequest):
@@ -37,14 +36,14 @@ async def verify_text(request: NewsRequest):
             json={"api_key": TAVILY_API_KEY, "query": request.text, "search_depth": "advanced"}).json()
         context = "\n".join([r['content'] for r in search_res.get("results", [])])
         
-        prompt = f"Statement: {request.text}\nContext: {context}\nInstruction: Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Then reason."
+        prompt = f"Statement: {request.text}\nContext: {context}\nInstruction: Start your response with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Then provide reasoning."
         chat = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}], 
             model="llama-3.3-70b-versatile"
         )
         return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Deployment Error: {str(e)}"}
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/predict-image")
 async def verify_image(file: UploadFile = File(...)):
@@ -52,16 +51,17 @@ async def verify_image(file: UploadFile = File(...)):
         content = await file.read()
         b64_image = base64.b64encode(content).decode('utf-8')
         
+        # Using a reliable vision model ID
         chat = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct", 
+            model="llama-3.2-11b-vision-preview", 
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Is this image Real, Fake, or AI-generated? Start with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'."},
+                    {"type": "text", "text": "Is this image Real, Fake, or AI-generated? Start your response with 'LABEL: REAL', 'LABEL: FAKE', or 'LABEL: AI_GENERATED'. Explain the details."},
                     {"type": "image_url", "image_url": {"url": f"data:{file.content_type};base64,{b64_image}"}}
                 ]
             }],
         )
         return {"prediction": chat.choices[0].message.content}
     except Exception as e:
-        return {"prediction": f"Deployment Error: {str(e)}"}
+        return {"prediction": f"Server Error: {str(e)}"}
