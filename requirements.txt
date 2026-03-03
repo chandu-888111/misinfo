@@ -1,6 +1,7 @@
 fastapi
-groq
-pydantic
-requests
-python-multipart
 uvicorn
+pydantic
+python-multipart
+openai
+groq
+requests
